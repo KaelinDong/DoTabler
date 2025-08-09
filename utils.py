@@ -9,21 +9,6 @@ from typing import Dict, List
 
 STR_ROOT_SUBFIGURE_PATH = "./dataset/split_subfigures/{}/{}_result.json"
 
-def collate_fn(batch):
-    table_contents = [str(item[0]) if item[0] is not None else "" for item in batch]
-    text_contents = [str(item[1]) if item[1] is not None else "" for item in batch]
-
-    labels = [item[2] for item in batch]
-    inputs = tokenizer(
-        text=table_contents,
-        text_pair=text_contents,
-        padding=True,
-        truncation=True,
-        max_length=512,
-        return_tensors="pt"
-    )
-    labels = torch.tensor(labels, dtype=torch.long)
-    return inputs, labels
 
 def build_mcp_prompt(block: Dict) -> str:
     bbox_str = f"TopLeft:({block['bbox'][0]:.2f},{block['bbox'][1]:.2f}), BottomRight:({block['bbox'][2]:.2f},{block['bbox'][3]:.2f})"
@@ -56,30 +41,30 @@ def bool_contains_chinese(text: str) -> bool:
     return bool(pattern.search(text))
 
 
-def read_excel_dataset(str_xlsx: str) -> [List[str], List[str], List[List[str]]]:
-    df = pd.read_excel(str_xlsx)
+# def read_excel_dataset(str_xlsx: str) -> [List[str], List[str], List[List[str]]]:
+#     df = pd.read_excel(str_xlsx)
 
-    list_str_table_name = []
-    list_str_table_block = []
-    list_list_str_paragraph = []
-    for index, row in df.iterrows():
-        str_table_name = row["Item"]
-        str_related_paragraphs = row["Related_Paragraphs"]
-        str_table_block = row["Item_Subfigure"]
+#     list_str_table_name = []
+#     list_str_table_block = []
+#     list_list_str_paragraph = []
+#     for index, row in df.iterrows():
+#         str_table_name = row["Item"]
+#         str_related_paragraphs = row["Related_Paragraphs"]
+#         str_table_block = row["Item_Subfigure"]
 
-        if isinstance(str_table_name, str) and isinstance(str_related_paragraphs, str) and isinstance(str_table_block, str):
-            if not bool_contains_chinese(str_table_name):
-                list_str_paragraph = [s.strip() for s in str_related_paragraphs.split(",")]
-            else:
-                continue
-        else:
-            continue
+#         if isinstance(str_table_name, str) and isinstance(str_related_paragraphs, str) and isinstance(str_table_block, str):
+#             if not bool_contains_chinese(str_table_name):
+#                 list_str_paragraph = [s.strip() for s in str_related_paragraphs.split(",")]
+#             else:
+#                 continue
+#         else:
+#             continue
 
-        list_str_table_name.append(str_table_name)
-        list_str_table_block.append(str_table_block)
-        list_list_str_paragraph.append(list_str_paragraph)
+#         list_str_table_name.append(str_table_name)
+#         list_str_table_block.append(str_table_block)
+#         list_list_str_paragraph.append(list_str_paragraph)
 
-    return list_str_table_name, list_str_table_block, list_list_str_paragraph
+#     return list_str_table_name, list_str_table_block, list_list_str_paragraph
 
 
 def organize_training_dataset(list_str_table_block, list_list_str_paragraph, list_str_pdf_text_paragraph):
@@ -292,19 +277,18 @@ def read_benchmark_dataset(str_xlsx: str):
     df = df.where(pd.notnull(df), None)
 
     list_str_company = []
-    list_str_table_name = []
+    # list_str_table_name = []
     list_str_table_block = []
     list_list_str_paragraph = []
     for index, row in df.iterrows():
-        str_company = row["Company Name"]
-        str_table_name = row["Item"]
+        str_company = row["PDF_Name"]
+        # str_table_name = row["Item"]
         str_table_block = row["Item_Subfigure"]
-        str_table_title = row["Title"]
         str_related_paragraph = row["Related_Paragraphs"]
 
         if str_table_block and str_related_paragraph:
             list_str_company.append(str_company)
-            list_str_table_name.append(str_table_name)
+            # list_str_table_name.append(str_table_name)
             list_str_table_block.append(str_table_block)
 
             list_str_temp_related_paragraph = str_related_paragraph.split(",")

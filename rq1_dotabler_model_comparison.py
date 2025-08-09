@@ -152,7 +152,7 @@ def bool_contains_chinese(text: str) -> bool:
     pattern = re.compile(r'[\u4e00-\u9fff]')
     return bool(pattern.search(text))
 
-def read_excel_dataset(str_xlsx: str) -> [List[str], List[str], List[List[str]]]:
+def read_excel_dataset(str_xlsx: str): # -> [List[str], List[str], List[List[str]]]:
     df = pd.read_excel(str_xlsx)
 
     list_str_table_name = []

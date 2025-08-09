@@ -9,7 +9,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, AutoModel
 
-from utils import collate_fn
 from sklearn.model_selection import train_test_split
 
 
@@ -54,19 +53,15 @@ def ana_benchmark_dataset(str_xlsx: str):
     df = df.where(pd.notnull(df), None)
 
     list_str_company = []
-    list_str_table_name = []
     list_str_table_block = []
     list_list_str_paragraph = []
     for index, row in df.iterrows():
-        str_company = row["Company Name"]
-        str_table_name = row["Item"]
+        str_company = row["PDF_Name"]
         str_table_block = row["Item_Subfigure"]
-        str_table_title = row["Title"]
         str_related_paragraph = row["Related_Paragraphs"]
 
         if str_table_block and str_related_paragraph:
             list_str_company.append(str_company)
-            list_str_table_name.append(str_table_name)
             list_str_table_block.append(str_table_block)
 
             list_str_temp_related_paragraph = str_related_paragraph.split(",")
@@ -119,6 +114,23 @@ def retrieve_company_all_text_block(str_company):
     list_str_text_block = [str_block for str_block in list_str_text_block if "text" in str_block or "list" in str_block]
 
     return list_str_text_block
+
+
+def collate_fn(batch):
+    table_contents = [str(item[0]) if item[0] is not None else "" for item in batch]
+    text_contents = [str(item[1]) if item[1] is not None else "" for item in batch]
+
+    labels = [item[2] for item in batch]
+    inputs = tokenizer(
+        text=table_contents,
+        text_pair=text_contents,
+        padding=True,
+        truncation=True,
+        max_length=512,
+        return_tensors="pt"
+    )
+    labels = torch.tensor(labels, dtype=torch.long)
+    return inputs, labels
 
 
 class RelationDataset(Dataset):
@@ -192,123 +204,121 @@ def company_perfect_stats(list_n_label, list_n_pred, list_company):
     return combined
 
 
-str_xlsx = "./dataset/benchmark_dataset.xlsx"
-
-
-dict_result = ana_benchmark_dataset(str_xlsx)
-
-list_arxiv_company = []
-list_pubmed_company = []
-list_all_company = []
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 STR_MODEL_NAME = "roberta-base"
-
-str_model_path = f"./models/block_relation_model_{STR_MODEL_NAME}_notitle.pth"
-
 tokenizer = AutoTokenizer.from_pretrained(STR_MODEL_NAME)
-bert_model = AutoModel.from_pretrained(STR_MODEL_NAME).to(DEVICE)
-bert_model.eval()
 
-print(f"Loading saved model from {str_model_path} ...")
-model = BlockRelationClassifier(hidden_size = bert_model.config.hidden_size).to(DEVICE)
-model.load_state_dict(torch.load(str_model_path, map_location=DEVICE))
-print("Model loaded. Start evaluation...")
-
-for key, value in dict_result.items():
-    if key.startswith("25") and key not in list_arxiv_company:
-        list_arxiv_company.append(key)
-
-    elif not key.startswith("25") and key not in list_pubmed_company:
-        list_pubmed_company.append(key)
-
-list_all_company = list_arxiv_company + list_pubmed_company
-list_random_company = select_random_elements(list_all_company)
-
-def read_benchmark_dataset(str_xlsx: str):
-    df = pd.read_excel(str_xlsx)
-    df = df.where(pd.notnull(df), None)
-
-    list_str_company = []
-    list_str_table_name = []
-    list_str_table_block = []
-    list_list_str_paragraph = []
-    for index, row in df.iterrows():
-        str_company = row["Company Name"]
-        str_table_name = row["Item"]
-        str_table_block = row["Item_Subfigure"]
-        str_table_title = row["Title"]
-        str_related_paragraph = row["Related_Paragraphs"]
-
-        if str_table_block and str_related_paragraph:
-            list_str_company.append(str_company)
-            list_str_table_name.append(str_table_name)
-            list_str_table_block.append(str_table_block)
-
-            list_str_temp_related_paragraph = str_related_paragraph.split(",")
-            list_str_temp_related_paragraph = [str_temp_related_paragraph.strip() for str_temp_related_paragraph in
-                                               list_str_temp_related_paragraph if str_temp_related_paragraph]
-            list_list_str_paragraph.append(list_str_temp_related_paragraph)
-
-        else:
-            # no valid table or no corresponding text paragraphs are recognized
-            continue
-
-    # organize the labelled data into training set and testing set
-    # the training / testing sample is of tuple, with the first item is table block content (containing title),
-    # and the second item is text block content
-    list_tuple_pos_sample = []
-    list_tuple_neg_sample = []
-    list_final_company = []
-
-    for str_company, str_table_block, list_str_paragraph in zip(list_str_company, list_str_table_block, list_list_str_paragraph):
-        str_json = STR_ROOT_SUBFIGURE_PATH.format(str_company, str_company)
-        try:
-            dict_subfigure_content = load_pdf_json(str_json)
-        except:
-            print(f"The preprocessing file of {str_company} is wrong")
-            continue
-
-        if "," in str_table_block:
-            str_table_block = str_table_block.split(",")[0].strip()
-
-        str_table_block_content = retrieve_subfigure_content(dict_subfigure_content, str_table_block)
-        str_table = str_table_block_content
-
-        # constructing the positive samples
-        for str_paragraph in list_str_paragraph:
-            str_para_content = retrieve_subfigure_content(dict_subfigure_content, str_paragraph)
-            list_tuple_pos_sample.append((str_table, str_para_content))
-            list_final_company.append(str_company)
-
-        # constructing the negative samples
-        list_str_key_negative = select_random_text_or_list_keys(dict_subfigure_content, list_str_paragraph,
-                                                                len(list_str_paragraph), seed=42)
-        for str_neg_paragraph in list_str_key_negative:
-            str_neg_para_content = retrieve_subfigure_content(dict_subfigure_content, str_neg_paragraph)
-            list_tuple_neg_sample.append((str_table, str_neg_para_content))
-            list_final_company.append(str_company)
-
-    return list_tuple_pos_sample, list_tuple_neg_sample, list_final_company
+if __name__ == "__main__":
+    str_xlsx = "./dataset/benchmark_dataset.xlsx"
 
 
-list_tuple_pos_sample, list_tuple_neg_sample, list_final_company = read_benchmark_dataset(str_xlsx)
-list_y = [1] * len(list_tuple_pos_sample) + [0] * len(list_tuple_neg_sample)
+    dict_result = ana_benchmark_dataset(str_xlsx)
 
-X_train, X_test, y_train, y_test, company_train, company_test = train_test_split(
-        list_tuple_pos_sample + list_tuple_neg_sample, list_y, list_final_company,
-    test_size=0.3, random_state=42, shuffle=True
-    )
+    list_arxiv_company = []
+    list_pubmed_company = []
+    list_all_company = []
 
-list_n_label, list_n_pred, list_float_time = test_saved_model(model, X_test, y_test)
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-df = pd.DataFrame({
-        'company': company_test,
-        'label': y_test,
-        'pred': list_n_pred,
-        'time': list_float_time
-    })
+    str_model_path = f"./models/block_relation_model_{STR_MODEL_NAME}_notitle.pth"
 
-df.to_excel('xxx/dotabler.xlsx', index=False)
+    bert_model = AutoModel.from_pretrained(STR_MODEL_NAME).to(DEVICE)
+    bert_model.eval()
 
-company_perfect_stats(list_n_label, list_n_pred, company_test)
+    print(f"Loading saved model from {str_model_path} ...")
+    model = BlockRelationClassifier(hidden_size = bert_model.config.hidden_size).to(DEVICE)
+    model.load_state_dict(torch.load(str_model_path, map_location=DEVICE))
+    print("Model loaded. Start evaluation...")
+
+    for key, value in dict_result.items():
+        if key.startswith("25") and key not in list_arxiv_company:
+            list_arxiv_company.append(key)
+
+        elif not key.startswith("25") and key not in list_pubmed_company:
+            list_pubmed_company.append(key)
+
+    list_all_company = list_arxiv_company + list_pubmed_company
+    list_random_company = select_random_elements(list_all_company)
+
+    def read_benchmark_dataset(str_xlsx: str):
+        df = pd.read_excel(str_xlsx)
+        df = df.where(pd.notnull(df), None)
+
+        list_str_company = []
+        list_str_table_block = []
+        list_list_str_paragraph = []
+        for index, row in df.iterrows():
+            str_company = row["PDF_Name"]
+            str_table_block = row["Item_Subfigure"]
+            str_related_paragraph = row["Related_Paragraphs"]
+
+            if str_table_block and str_related_paragraph:
+                list_str_company.append(str_company)
+                list_str_table_block.append(str_table_block)
+
+                list_str_temp_related_paragraph = str_related_paragraph.split(",")
+                list_str_temp_related_paragraph = [str_temp_related_paragraph.strip() for str_temp_related_paragraph in
+                                                list_str_temp_related_paragraph if str_temp_related_paragraph]
+                list_list_str_paragraph.append(list_str_temp_related_paragraph)
+
+            else:
+                # no valid table or no corresponding text paragraphs are recognized
+                continue
+
+        # organize the labelled data into training set and testing set
+        # the training / testing sample is of tuple, with the first item is table block content (containing title),
+        # and the second item is text block content
+        list_tuple_pos_sample = []
+        list_tuple_neg_sample = []
+        list_final_company = []
+
+        for str_company, str_table_block, list_str_paragraph in zip(list_str_company, list_str_table_block, list_list_str_paragraph):
+            str_json = STR_ROOT_SUBFIGURE_PATH.format(str_company, str_company)
+            try:
+                dict_subfigure_content = load_pdf_json(str_json)
+            except:
+                print(f"The preprocessing file of {str_company} is wrong")
+                continue
+
+            if "," in str_table_block:
+                str_table_block = str_table_block.split(",")[0].strip()
+
+            str_table_block_content = retrieve_subfigure_content(dict_subfigure_content, str_table_block)
+            str_table = str_table_block_content
+
+            # constructing the positive samples
+            for str_paragraph in list_str_paragraph:
+                str_para_content = retrieve_subfigure_content(dict_subfigure_content, str_paragraph)
+                list_tuple_pos_sample.append((str_table, str_para_content))
+                list_final_company.append(str_company)
+
+            # constructing the negative samples
+            list_str_key_negative = select_random_text_or_list_keys(dict_subfigure_content, list_str_paragraph,
+                                                                    len(list_str_paragraph), seed=42)
+            for str_neg_paragraph in list_str_key_negative:
+                str_neg_para_content = retrieve_subfigure_content(dict_subfigure_content, str_neg_paragraph)
+                list_tuple_neg_sample.append((str_table, str_neg_para_content))
+                list_final_company.append(str_company)
+
+        return list_tuple_pos_sample, list_tuple_neg_sample, list_final_company
+
+
+    list_tuple_pos_sample, list_tuple_neg_sample, list_final_company = read_benchmark_dataset(str_xlsx)
+    list_y = [1] * len(list_tuple_pos_sample) + [0] * len(list_tuple_neg_sample)
+
+    X_train, X_test, y_train, y_test, company_train, company_test = train_test_split(
+            list_tuple_pos_sample + list_tuple_neg_sample, list_y, list_final_company,
+        test_size=0.3, random_state=42, shuffle=True
+        )
+
+    list_n_label, list_n_pred, list_float_time = test_saved_model(model, X_test, y_test)
+
+    df = pd.DataFrame({
+            'company': company_test,
+            'label': y_test,
+            'pred': list_n_pred,
+            'time': list_float_time
+        })
+
+    df.to_excel('xxx/dotabler.xlsx', index=False)
+
+    company_perfect_stats(list_n_label, list_n_pred, company_test)
